@@ -1,0 +1,3 @@
+results:
+- changed-files:
+  - any-glob-to-any-file: 'results/**/*'

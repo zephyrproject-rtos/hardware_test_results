@@ -1,0 +1,104 @@
+# Copyright (c) 2024 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+name: Check Results
+
+on: pull_request
+
+env:
+  PR_URL: ${{github.event.pull_request.html_url}}
+  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: checkout
+      uses: actions/checkout@v4
+
+    - name: cache-pip
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-test-pip
+
+    - name: install-pip
+      run: |
+        pip3 install wheel setuptools GitPython
+        pip3 install junit2html
+
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
+
+    - name: Put label
+      id: labeler
+      uses: actions/labeler@v5
+      with:
+        repo-token: "${{ secrets.GITHUB_TOKEN }}"
+
+    - name: Check results
+      id: results
+      env:
+        ADDED_FILES: ${{ steps.changed-files.outputs.added_files }}
+      run: |
+        latest=$(scripts/version_mgr.py -L)
+        echo "version=${latest}" >> $GITHUB_OUTPUT;
+        echo "Latest is ${latest}";
+        for file in ${ADDED_FILES}; do
+          if [[ ${file} == results/* ]]; then
+            echo "Verifying content of ${file}"
+            fd=$(dirname $file)
+            v=$(basename $fd)
+            max_size=10
+            cmd="python3 scripts/results_verification.py -Z ${v} -P ./${file} -S ${max_size}"
+            echo $cmd
+            eval $cmd
+            if [ $? -eq 0 ]
+            then
+              echo "Results file succesfully verified"
+              gh pr review --approve "$PR_URL"
+            else
+              echo "Results file verification failed"
+              exit 1
+            fi
+          fi
+        done
+    - name: Auto-merge
+      id: auto-merge
+      env:
+        TRUSTED_AUTHORS: |
+          (
+            "PerMac"
+            "hakehuang"
+          )
+      shell: bash
+      run: |
+          AUTHOR_USERNAME="${{ github.event.pull_request.user.login }}"
+          TRUSTED_AUTHORS=${{ env.TRUSTED_AUTHORS }}
+          IS_LABEL_RESULTS="${{ contains( github.event.pull_request.labels.*.name, 'results') }}"
+          echo IS_LABEL_RESULTS ${IS_LABEL_RESULTS}
+          echo "Checking if ${AUTHOR_USERNAME} is a trusted author..."
+          AUTHOR_FOUND=false
+          for item in ${TRUSTED_AUTHORS[*]}
+          do
+            if [ "$item" == ${AUTHOR_USERNAME} ]
+            then
+              echo "Found trusted author"
+              AUTHOR_FOUND=true
+            fi
+          done
+          echo "Author found is ${AUTHOR_FOUND}"
+          if [ ${AUTHOR_FOUND} ] && [ ${IS_LABEL_RESULTS} ]
+          then
+            echo "enabling auto-merge"
+            gh pr merge --auto --rebase "$PR_URL"
+          else
+            echo "PR's author is not among trusted authors. Auto-merge not enable"
+          fi
