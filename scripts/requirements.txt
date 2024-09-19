@@ -1,0 +1,4 @@
+# packages required by  results_uploader.py
+GitPython
+iniconfig
+PyGithub
